@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ゲーム部トランシーバー</title>
+
+<style>
+body{
+  margin:0;
+  font-family: system-ui, sans-serif;
+  background:#e8f4ff;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  height:100vh;
+}
+
+/* ===== カード ===== */
+.card{
+  background:white;
+  padding:28px;
+  border-radius:22px;
+  box-shadow:0 10px 30px rgba(0,0,0,.12);
+  width:320px;
+  text-align:center;
+}
+
+/* ===== タイトル ===== */
+.title{
+  font-size:20px;
+  font-weight:bold;
+  margin-bottom:18px;
+  color:#2b3a55;
+}
+
+/* ===== 入力 ===== */
+input{
+  width:100%;
+  padding:12px;
+  margin:6px 0;
+  border-radius:12px;
+  border:1px solid #ddd;
+  font-size:16px;
+}
+
+/* ===== ボタン ===== */
+button{
+  width:100%;
+  padding:14px;
+  border:none;
+  border-radius:16px;
+  font-size:16px;
+  font-weight:bold;
+  cursor:pointer;
+  margin-top:10px;
+}
+
+/* ログイン */
+.login-btn{
+  background:#06c755;
+  color:white;
+}
+
+/* PTT */
+.ptt{
+  background:#4da3ff;
+  color:white;
+  font-size:18px;
+  margin-top:16px;
+  transition:.15s;
+}
+
+.ptt.active{
+  background:#ff5252;
+  transform:scale(0.96);
+}
+
+/* ロック表示 */
+.lock{
+  margin-top:10px;
+  font-size:14px;
+  color:#666;
+}
+</style>
+</head>
+<body>
+
+<div class="card" id="loginCard">
+  <div class="title">ゲーム部トランシーバー</div>
+  <input id="groupId" placeholder="参加コード">
+  <input id="pin" placeholder="PIN">
+  <button class="login-btn" onclick="login()">ログイン</button>
+</div>
+
+<div class="card" id="talkCard" style="display:none;">
+  <div class="title">🎙 トランシーバー</div>
+  <button id="pttBtn" class="ptt">押して話す</button>
+  <div class="lock" id="lockState">ロック：OFF</div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {
+  getFirestore,
+  doc,
+  setDoc,
+  onSnapshot,
+  serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+/* ===== Firebase ===== */
+const firebaseConfig = {
+  apiKey: "AIzaSyCOAvu39P6g6Vbli8P3nKMKWjaKQwv5PdA",
+  authDomain: "chat-63a9f.firebaseapp.com",
+  projectId: "chat-63a9f",
+  storageBucket: "chat-63a9f.firebasestorage.app",
+  messagingSenderId: "678493610024",
+  appId: "1:678493610024:web:642d1f88d11578753f151d",
+  measurementId: "G-RW9DY5HT6T"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+/* ===== PIN一覧 ===== */
+const PINS = [
+"52643798","47295836","42735698","86547329","26593847",
+"58932467","26493785","46395728","27936854","89724536","69852473"
+];
+
+let myPin = "";
+let audioStream = null;
+let mediaRecorder = null;
+let isLocked = false;
+let isTalking = false;
+
+/* ===== ログイン ===== */
+window.login = () => {
+  const gid = document.getElementById("groupId").value.trim();
+  const pin = document.getElementById("pin").value.trim();
+
+  if (gid !== "Suc000001") return alert("参加コード違う");
+  if (!PINS.includes(pin)) return alert("PIN違う");
+
+  myPin = pin;
+
+  document.getElementById("loginCard").style.display="none";
+  document.getElementById("talkCard").style.display="block";
+
+  initAudio();
+};
+
+/* ===== 音声初期化 ===== */
+async function initAudio(){
+  audioStream = await navigator.mediaDevices.getUserMedia({audio:true});
+  mediaRecorder = new MediaRecorder(audioStream);
+
+  mediaRecorder.ondataavailable = async e=>{
+    if(e.data.size===0) return;
+
+    const arrayBuffer = await e.data.arrayBuffer();
+
+    await setDoc(doc(db,"voice","live"),{
+      blob: Array.from(new Uint8Array(arrayBuffer)),
+      pin: myPin,
+      time: serverTimestamp()
+    });
+  };
+
+  listenVoice();
+}
+
+/* ===== 受信 ===== */
+function listenVoice(){
+  onSnapshot(doc(db,"voice","live"),snap=>{
+    const d = snap.data();
+    if(!d) return;
+    if(d.pin===myPin) return;
+
+    const audio = new Audio(
+      URL.createObjectURL(
+        new Blob([new Uint8Array(d.blob)],{type:"audio/webm"})
+      )
+    );
+    audio.play();
+  });
+}
+
+/* ===== PTT ===== */
+const btn = document.getElementById("pttBtn");
+
+/* トグル対象PIN */
+const TOGGLE_PIN = "52643798";
+
+/* 押す */
+btn.addEventListener("mousedown",()=>{
+  if(myPin===TOGGLE_PIN){
+    toggleTalk();
+  }else{
+    startTalk();
+  }
+});
+
+/* 離す */
+btn.addEventListener("mouseup",()=>{
+  if(myPin===TOGGLE_PIN) return;
+  stopTalk();
+});
+
+/* ===== トグル ===== */
+function toggleTalk(){
+  isLocked = !isLocked;
+  document.getElementById("lockState").textContent =
+    "ロック：" + (isLocked ? "ON" : "OFF");
+
+  if(isLocked){
+    startTalk();
+  }else{
+    stopTalk();
+  }
+}
+
+/* ===== 送信開始 ===== */
+function startTalk(){
+  if(isTalking) return;
+  isTalking = true;
+  btn.classList.add("active");
+  btn.textContent = "送信中…";
+  mediaRecorder.start(300); // ←低遅延
+}
+
+/* ===== 送信停止 ===== */
+function stopTalk(){
+  if(!isTalking) return;
+  isTalking = false;
+  btn.classList.remove("active");
+  btn.textContent = "押して話す";
+  mediaRecorder.stop();
+}
+</script>
+</body>
+</html>
